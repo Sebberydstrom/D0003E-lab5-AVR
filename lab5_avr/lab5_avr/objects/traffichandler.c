@@ -73,10 +73,12 @@ int traffichandler_check_lights(struct Traffichandler* self, __attribute__((unus
 		if (self->passed_before_change >= MAX_CARS_BEFORE_LIGHT_SWITCH) {
 			// When too many cars have passed on one side, switch over the light.
 			if (self->last_green_direction == NORTHBOUND && south->in_queue > 0) {
+				ASYNC(self, traffichandler_set_red_light, 0);
 				self->light_update_pending = true;
 				AFTER(MSEC(TIME_CROSS_BRIDGE + DELAY_LIGHT_SWITCH), self, traffichandler_set_light, SOUTHBOUND_GREEN);
 				return 0;
 			} else if (self->last_green_direction == SOUTHBOUND && north->in_queue > 0) {
+				ASYNC(self, traffichandler_set_red_light, 0);
 				self->light_update_pending = true;
 				AFTER(MSEC(TIME_CROSS_BRIDGE + DELAY_LIGHT_SWITCH), self, traffichandler_set_light, NORTHBOUND_GREEN);
 				return 0;
@@ -89,9 +91,13 @@ int traffichandler_check_lights(struct Traffichandler* self, __attribute__((unus
 		uint8_t active_direction = self->last_green_direction;
 		uint8_t other_direction = active_direction == NORTHBOUND ? SOUTHBOUND : NORTHBOUND;
 		if (self->lane[active_direction].in_queue > 0) {
+			// Test to don't do anything here, it should work with your code. -> return 0; i think
 			uint8_t lights = active_direction == NORTHBOUND ? NORTHBOUND_GREEN : SOUTHBOUND_GREEN;
 			ASYNC(self, traffichandler_set_light, lights);
 		} else if (self->lane[other_direction].in_queue > 0) {
+			// If this is true, we need to change traffic lights to other direction, but we need to wait 5 sec before we can 
+			// change traffic lights to green on other side, so that the car at the bridge get time to pass.
+			ASYNC(self, traffichandler_set_red_light, 0);
 			self->light_update_pending = true;
 			uint8_t other_lights = active_direction == NORTHBOUND ? SOUTHBOUND_GREEN : NORTHBOUND_GREEN;
 			
@@ -119,6 +125,13 @@ int traffichandler_set_light(struct Traffichandler* self, int packed_data) {
 	self->lane[NORTHBOUND].light = nb_green;
 	self->lane[SOUTHBOUND].light = sb_green;
 	
+	// Set last green direction, for future reference in check_traffic_lights.
+	if (self->lane[NORTHBOUND].light == GREEN) {
+		self->last_green_direction = NORTHBOUND;
+	} else {
+		self->last_green_direction = SOUTHBOUND;
+	}
+	
 	ASYNC(self->com, com_write_data, packed_data); // Write data to serial port.
 
 	ASYNC(self, traffichandler_print, 0);
@@ -127,6 +140,7 @@ int traffichandler_set_light(struct Traffichandler* self, int packed_data) {
 
 int traffichandler_set_red_light(struct Traffichandler* self, __attribute__((unused)) int direction) {
 	ASYNC(self->com, com_write_data, PACK_LIGHTS(RED, RED));
+	// Set last green direction, for future reference in check_traffic_lights.
 	if (self->lane[NORTHBOUND].light == GREEN) {
 		self->last_green_direction = NORTHBOUND;
 	} else {
